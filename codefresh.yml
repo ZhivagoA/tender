@@ -1,0 +1,88 @@
+version: '1.0'
+stages:
+  - clone
+  - build
+  - test
+  - package
+  - kompose
+  - deploy
+steps:
+  clone:
+    title: Клонирование репозитория
+    type: git-clone
+    stage: clone
+
+  build:
+    title: Сборка Go-приложения
+    image: golang:1.21-alpine
+    stage: build
+    working_directory: '${{clone}}'
+    commands:
+      - go mod download
+      - go build -o main ./cmd
+
+  test:
+    title: Запуск тестов
+    image: golang:1.21-alpine
+    stage: test
+    working_directory: '${{clone}}'
+    services:
+      postgres:
+        image: postgres:latest
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tender
+    environment:
+      POSTGRES_CONN: postgres://postgres:postgres@postgres:5432/tender
+    commands:
+      - go test ./...
+
+  package:
+    title: Сборка Docker-образа
+    type: build
+    stage: package
+    image_name: docker.io/cnrprod1725373637-user-90271/go-app
+    tag: '${{CF_BRANCH}}-${{CF_SHORT_REVISION}}'
+    dockerfile: Dockerfile
+    working_directory: '${{clone}}'
+
+  push:
+    title: Публикация Docker-образа
+    type: push
+    stage: push
+    candidate: '${{package}}'
+    image_name: 'docker.io/cnrprod1725373637-user-90271/go-app'
+    tag: '${{CF_BRANCH}}-${{CF_SHORT_REVISION}}'
+    registry: 'docker.io'
+
+  kompose_install:
+    title: Установка Kompose
+    stage: kompose
+    type: freestyle
+    image: alpine
+    commands:
+      - apk add --no-cache curl
+      - curl -L https://github.com/kubernetes/kompose/releases/download/v1.21.0/kompose-linux-amd64 -o /usr/local/bin/kompose
+      - chmod +x /usr/local/bin/kompose
+
+  kompose_convert:
+    title: Преобразование docker-compose.yml в Kubernetes YAML
+    stage: kompose
+    type: freestyle
+    image: alpine
+    working_directory: '${{clone}}'
+    commands:
+      - kompose convert -o ./kubernetes/
+
+  kubectl_apply:
+    title: Развертывание в Kubernetes
+    stage: deploy
+    type: freestyle
+    image: bitnami/kubectl:latest
+    working_directory: '${{clone}}'
+    commands:
+      - export KUBECONFIG=${{CF_VOLUME_PATH}}/kube/config
+      - mkdir -p $(dirname $KUBECONFIG)
+      - cp ./kube/kube.config $KUBECONFIG
+      - kubectl apply -f ./kubernetes/
