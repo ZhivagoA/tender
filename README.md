@@ -1,6 +1,7 @@
 # Как запустить
-Сбилдить docker-compose.yaml
+Сбилдить docker-compose.yaml: 
 docker-compose up --build
+
 Сервис доступен на 8080
 
 # API Documentation
